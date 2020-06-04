@@ -1,7 +1,10 @@
 package trocararquivos;
 
+import java.awt.FileDialog;
+import java.awt.Frame;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -9,10 +12,13 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.Scanner;
 import java.util.stream.Stream;
 
 public class TCPClient {
+	
+	Socket socket;
 
 	private static final int BUFFER_SIZE = 1024;
 
@@ -23,95 +29,118 @@ public class TCPClient {
 	private static final String FILES_DIRECTORY = "C:/folder/client/";
 
 	public static void main(String args[]) {
+		new TCPClient();
+	}
+	
+	public TCPClient() {
 		try {
-			Socket socket = new Socket("localhost", 6000);
+			socket = new Socket("localhost", 6000);
 			// Socket socket = new Socket("187.255.116.242", 6000);
 
 			System.out.println("O cliente conectou ao servidor");
 
 			Scanner s = new Scanner(System.in);
 
-			PrintStream out;
-
-			Thread receiveMessages = new Thread() {
-				@Override
-				public void run() {
-					try {
-						BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-						Stream<String> serverMessages = in.lines();
-						serverMessages.forEach(message -> {
-							System.out.println(message);
-						});
-					} catch (IOException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-				}
-			};
-			receiveMessages.start();
+			// Thread to receive server's messages
+			new Thread(new ReceiveMessages(socket)).start();;
+			
+			PrintStream out = new PrintStream(socket.getOutputStream()); 
 
 			while (s.hasNextLine()) {
 				String line = s.nextLine();
-				out = new PrintStream(socket.getOutputStream());
-				out.println(line);
-
-//				if (line.startsWith("download")) {
-//					byte[] bytes = new byte[BUFFER_SIZE];
-//					InputStream inStream = socket.getInputStream();
-//
-//					// READING FILE NAME
-//					byte[] fileNameBytes = new byte[HEADER_FILE_NAME];
-//					inStream.read(fileNameBytes);
-//					String fileName = new String(fileNameBytes).trim();
-//					System.out.println("File Name: " + fileName);
-//
-//					// READING FILE SIZE
-//					byte[] fileSizeBytes = new byte[HEADER_FILE_SIZE];
-//					System.out.println("2");
-//					inStream.read(fileSizeBytes);
-//					System.out.println("3");
-//					String fileSize = new String(fileSizeBytes).trim();
-//					System.out.println("File Size: " + fileSize + " bytes");
-//					System.out.println("4");
-//
-//					File file = new File(FILES_DIRECTORY + fileName);
-//					OutputStream outStream = new FileOutputStream(file);
-//					// READING FILE CONTENT
-//					int count;
-//					System.out.println("5");
-//					while ((count = inStream.read(bytes)) > 0) {
-//						outStream.write(bytes, 0, count);
-//					}
-//					System.out.println("6");
-//					outStream.close();
-//				}
+				sendMessageToServer(out, line);
 			}
 
-			// out.close();
 			s.close();
+			out.close();
 			socket.close();
-
-			/*
-			 * File file = new File("C:/folder/client/teste" + System.currentTimeMillis() +
-			 * ".txt"); byte[] bytes = new byte[BUFFER_SIZE]; InputStream in =
-			 * socket.getInputStream(); OutputStream out = new FileOutputStream(file);
-			 * 
-			 * // READING FILE NAME byte[] fileNameBytes = new byte[HEADER_FILE_NAME];
-			 * in.read(fileNameBytes); String fileName = new String(fileNameBytes).trim();
-			 * System.out.println("File Name: " + fileName);
-			 * 
-			 * // READING FILE SIZE byte[] fileSizeBytes = new byte[HEADER_FILE_SIZE];
-			 * in.read(fileSizeBytes); String fileSize = new String(fileSizeBytes).trim();
-			 * System.out.println("File Size: " + fileSize + " bytes");
-			 * 
-			 * // READING FILE CONTENT int count; while ((count = in.read(bytes)) > 0) {
-			 * out.write(bytes, 0, count); }
-			 * 
-			 * out.close(); in.close(); socket.close();
-			 */
 			System.out.println("Fim do cliente!");
 		} catch (IOException e) {
 			e.printStackTrace();
+		}
+	}
+	
+	private void sendMessageToServer(PrintStream out, String message) throws IOException {
+		if (message.startsWith("upload")) {
+			uploadFile();
+		} else {
+			out.println("T" + message);
+		}
+		out.flush();
+	}
+	
+	private void uploadFile() throws IOException {
+		FileDialog dialog = new FileDialog((Frame) null, "Select File to Open");
+	    dialog.setMode(FileDialog.LOAD);
+	    dialog.setVisible(true);
+	    File file = new File(dialog.getDirectory() + dialog.getFile());
+	    
+	    InputStream in = new FileInputStream(file);
+	    OutputStream out = socket.getOutputStream();
+	    //SET FLAG
+	    byte[] bufferFlag = Arrays.copyOf("F".getBytes(), 1);
+	    out.write(bufferFlag, 0, 1);
+	    
+	    //SET FILE NAME
+	    byte[] bufferName = Arrays.copyOf(file.getName().getBytes(), HEADER_FILE_NAME);
+	    out.write(bufferName, 0, HEADER_FILE_NAME);
+	    
+	    //SET FILE SIZE
+	    byte[] bufferSize = Arrays.copyOf(("" + file.length()).getBytes(), HEADER_FILE_SIZE);
+	    out.write(bufferSize, 0, HEADER_FILE_SIZE);
+	    out.write("\n".getBytes());
+	    
+	    byte[] bytes = new byte[1024];
+		int count;
+        while ((count = in.read(bytes)) > 0) {
+            out.write(bytes, 0, count);
+        }
+	    
+        in.close();
+	}
+	
+	class ReceiveMessages implements Runnable {
+		
+		Socket socket;
+		
+		public ReceiveMessages(Socket socket) {
+			this.socket = socket;
+		}
+		
+		@Override
+		public void run() {
+			try {
+				BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+				Stream<String> serverMessages = in.lines();
+				serverMessages.forEach(message -> {
+					if(message.startsWith("F")) {
+						try {
+						    String fileName = message.substring(1, 1 + HEADER_FILE_NAME).trim();
+						    
+						    Integer fileSize = Integer.parseInt(message.substring(1 + HEADER_FILE_NAME).trim());
+						    
+						    System.out.println("Receiving file " + fileName + " with " + fileSize + " bytes");
+						    
+						    FileOutputStream out = new FileOutputStream(FILES_DIRECTORY + fileName);
+						    int count;
+						    char[] buffer = new char[BUFFER_SIZE];
+						    while ((count = in.read(buffer)) > 0) {
+						    	out.write(new String(buffer).getBytes(), 0, count);
+						    	if(count >= fileSize)
+						    		break;
+						    }
+						    out.close();
+					    } catch (IOException e) {
+					    	e.printStackTrace();
+					    }
+					} else {
+						message = message.substring(1);
+						System.out.println(message);
+					}
+				});
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
 		}
 	}
 
